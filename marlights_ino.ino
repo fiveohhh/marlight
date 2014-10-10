@@ -4,6 +4,8 @@
 #define BRAKE_SWITCH_PIN 8
 #define BRAKE_LIGHT_PIN 13 // This pin used to turn on brake light
 #define POWER_PWM_PIN 5 // PWM for light power source
+#define LEFT_BLINKER_LIGHT_PIN 12 // This pin used to turn on brake light
+#define RIGHT_BLINKER_LIGHT_PIN 11 // This pin used to turn on brake light
 
 #define MILLIS_MULTIPLIER 7 // Since we changed PWM freq, millis now reports milliseconds *7
 
@@ -12,10 +14,14 @@
 
 #define SHORT_DELAY 60
 #define LONG_DELAY 120
+#define BLINKER_DELAY 400
 
 #define BRAKE_ON 0
 #define BRAKE_OFF 1
 
+#define BLINKER_STATUS_OFF 0
+#define BLINKER_STATUS_LEFT 1
+#define BLINKER_STATUS_RIGHT 2
 
 #define PROGRAMMING_DELAY_MILLISECONDS 5000
 
@@ -24,6 +30,10 @@ volatile int brakeSwitchStatus = 0; //
 ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
     // used to toggle power to all pins.
    
+    // 0 is off
+    static int blinkStatus = BLINKER_STATUS_OFF;
+    static unsigned long blinkerStartTime;
+
     // This controls the MOSFET that gives our lights a 60Hz flicker
     static bool isOn = 0;
     if (isOn)
@@ -39,15 +49,72 @@ ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
      isOn = 1;
    }
    
-   
+    // handle left blinker stuffs
+    if (digitalRead(LEFT_BLINKER_SWITCH_PIN) == LOW)
+    {
+        if (blinkStatus == BLINKER_STATUS_OFF)
+        {
+            // was off, now on, set start time
+            blinkerStartTime = millis() / MILLIS_MULTIPLIER;
+            digitalWrite(LEFT_BLINKER_LIGHT_PIN, HIGH);
+        }
+        if (((millis() / MILLIS_MULTIPLIER) - blinkerStartTime) > BLINKER_DELAY)
+        {
+            // toggle blinker
+            digitalWrite(LEFT_BLINKER_LIGHT_PIN, !digitalRead(LEFT_BLINKER_LIGHT_PIN));
+
+            // reset starttime
+            blinkerStartTime = millis() / MILLIS_MULTIPLIER;
+        }
+
+        blinkStatus = BLINKER_STATUS_LEFT;
+    }
+    else if (digitalRead(LEFT_BLINKER_SWITCH_PIN) == HIGH)
+    {
+        // if it was on, but isn't, make sure we shut it off
+        digitalWrite(LEFT_BLINKER_LIGHT_PIN, LOW);
+    }
+
+    // handle right blinker
+    if (digitalRead(RIGHT_BLINKER_SWITCH_PIN) == LOW)
+    {
+        if (blinkStatus == BLINKER_STATUS_OFF)
+        {
+            // was off, now on, set start time
+            blinkerStartTime = millis() / MILLIS_MULTIPLIER;
+            digitalWrite(RIGHT_BLINKER_LIGHT_PIN, HIGH);
+        }
+        if (((millis() / MILLIS_MULTIPLIER) - blinkerStartTime) > BLINKER_DELAY)
+        {
+            // toggle blinker
+            digitalWrite(RIGHT_BLINKER_LIGHT_PIN, !digitalRead(RIGHT_BLINKER_LIGHT_PIN));
+
+            // reset starttime
+            blinkerStartTime = millis() / MILLIS_MULTIPLIER;
+        }
+
+        blinkStatus = BLINKER_STATUS_RIGHT;
+    }
+    else if (digitalRead(RIGHT_BLINKER_SWITCH_PIN) == HIGH)
+    {
+        // if it was on, but isn't, make sure we shut it off
+        digitalWrite(RIGHT_BLINKER_LIGHT_PIN, LOW);
+    }
+
+
 }
 
 void setup()
 {
   pinMode(POWER_PWM_PIN, OUTPUT);
+  pinMode(BRAKE_LIGHT_PIN, OUTPUT);
+  pinMode(LEFT_BLINKER_LIGHT_PIN, OUTPUT);
+  pinMode(RIGHT_BLINKER_LIGHT_PIN, OUTPUT);
+
+
   pinMode(BRAKE_SWITCH_PIN, INPUT_PULLUP);
-  pinMode(LEFT_BLINKER_SWITCH_PIN, INPUT);
-  pinMode(RIGHT_BLINKER_SWITCH_PIN, INPUT);
+  pinMode(LEFT_BLINKER_SWITCH_PIN, INPUT_PULLUP);
+  pinMode(RIGHT_BLINKER_SWITCH_PIN, INPUT_PULLUP);
   
   pinMode(13, OUTPUT);
   
@@ -78,7 +145,7 @@ void setup()
   unsigned long brakeTapStart = 0; // used for debouncing brake tap
   
   
-  Serial.println("Starting programming mode");
+  Serial.println("Starting programming modes");
   startTime = millis();
   
   unsigned long programmingTime = millis() - startTime;
