@@ -1,7 +1,9 @@
-
+// switch pins
 #define RIGHT_BLINKER_SWITCH_PIN 3
 #define LEFT_BLINKER_SWITCH_PIN 4
 #define BRAKE_SWITCH_PIN 8
+
+// light pins
 #define BRAKE_LIGHT_PIN 13 // This pin used to turn on brake light
 #define POWER_PWM_PIN 5 // PWM for light power source
 #define LEFT_BLINKER_LIGHT_PIN 12 // This pin used to turn on brake light
@@ -9,8 +11,8 @@
 
 #define MILLIS_MULTIPLIER 7 // Since we changed PWM freq, millis now reports milliseconds *7
 
-#define LOW_PWM 177
-#define HIGH_PWM 255
+#define LOW_PWM 177 // dim value of 50Hz flicker
+#define HIGH_PWM 255 // bright value of 50Hz flicker
 
 #define SHORT_DELAY 60
 #define LONG_DELAY 120
@@ -23,10 +25,32 @@
 #define BLINKER_STATUS_LEFT 1
 #define BLINKER_STATUS_RIGHT 2
 
-#define PROGRAMMING_DELAY_MILLISECONDS 5000
+#define PROGRAMMING_DELAY_MILLISECONDS 5000 // time to wait for programming input
 
-volatile int brakeSwitchStatus = 0; // 
 
+enum VOLTAGE_STATE {
+    VOLTAGE_STATE_UNKNOWN,
+    VOLTAGE_STATE_TOO_LOW,
+    VOLTAGE_STATE_NON_CHARGING,
+    VOLTAGE_STATE_CHARGING,
+    VOLTAGE_STATE_TOO_HIGH
+};
+
+enum LED_COLOR {
+    LED_COLOR_OFF,
+    LED_COLOR_RED,
+    LED_COLOR_GREEN,
+    LED_COLOR_ORANGE,
+    LED_COLOR_BLUE
+};
+
+static VOLTAGE_STATE v_state = VOLTAGE_STATE_UNKNOWN;
+
+void setLed(LED_COLOR ledColor)
+{
+}
+
+// this is running at 60Hz
 ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
     // used to toggle power to all pins.
    
@@ -34,7 +58,12 @@ ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
     static int blinkStatus = BLINKER_STATUS_OFF;
     static unsigned long blinkerStartTime;
 
-    // This controls the MOSFET that gives our lights a 60Hz flicker
+    // used to track the blinking voltage light.
+    static unsigned char voltage_counter = 0;
+    
+
+
+    /*--This controls the MOSFET that gives our lights a 60Hz flicker---*/
     static bool isOn = 0;
     if (isOn)
     {
@@ -48,10 +77,69 @@ ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
      analogWrite(POWER_PWM_PIN, HIGH_PWM);
      isOn = 1;
    }
-   
+    /*-------------------------------------------------------------------*/
+
+#ifdef FEATURE_VOLTAGE_DETECT
+    /*----Voltage light blink---*/
+    if (v_state == VOLTAGE_STATE_TOO_LOW)
+    {
+        // voltage low, blink orange
+        if (voltage_counter <= 30)
+        {
+            // turn led on orange
+            setLed(LED_COLOR_ORANGE);
+        }
+        else
+        {
+            // shut led off
+            setLed(LED_COLOR_OFF);
+        }
+
+    }
+    else if (v_state == VOLTAGE_STATE_TOO_HIGH)
+    {
+        // voltage low, blink RED
+        if (voltage_counter <= 30)
+        {
+            // turn led on red
+            setLed(LED_COLOR_RED);
+        }
+        else
+        {
+            // shut led off
+            setLed(LED_COLOR_OFF);
+        }
+    }
+    else if (v_state == VOLTAGE_STATE_CHARGING)
+    {
+        // normal operations solid green light
+        setLed(LED_COLOR_GREEN);
+    }
+    else if (v_state == VOLTAGE_STATE_NON_CHARGING)
+    {
+        // Probably not charging, orange light
+        setLed(LED_COLOR_ORANGE);
+    }
+    else
+    {
+        // shouldn't be here.  turn led blue
+    }
+    if (voltage_counter >= 60)
+    {
+        // reset the voltage counter.
+        voltage_counter = 0;
+    }
+    /*--------------------------*/
+#endif
+
+
+    /* We're assuming only one blinker will be present at a time.*/
+#ifdef BLINKER_SUPPORT
     // handle left blinker stuffs
     if (digitalRead(LEFT_BLINKER_SWITCH_PIN) == LOW)
     {
+#ifdef EXTERNAL_FLASHER
+#else
         if (blinkStatus == BLINKER_STATUS_OFF)
         {
             // was off, now on, set start time
@@ -68,16 +156,22 @@ ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
         }
 
         blinkStatus = BLINKER_STATUS_LEFT;
+#endif
     }
     else if (digitalRead(LEFT_BLINKER_SWITCH_PIN) == HIGH)
     {
+#ifdef EXTERNAL_FLASHER
+#else
         // if it was on, but isn't, make sure we shut it off
         digitalWrite(LEFT_BLINKER_LIGHT_PIN, LOW);
+#endif
     }
 
     // handle right blinker
     if (digitalRead(RIGHT_BLINKER_SWITCH_PIN) == LOW)
     {
+#ifdef EXTERNAL_FLASHER
+#else
         if (blinkStatus == BLINKER_STATUS_OFF)
         {
             // was off, now on, set start time
@@ -94,14 +188,22 @@ ISR(TIMER1_COMPA_vect){  //change the 0 to 1 for timer1 and 2 for timer2
         }
 
         blinkStatus = BLINKER_STATUS_RIGHT;
+#endif
     }
     else if (digitalRead(RIGHT_BLINKER_SWITCH_PIN) == HIGH)
     {
+#ifdef EXTERNAL_FLASHER
+#else
         // if it was on, but isn't, make sure we shut it off
         digitalWrite(RIGHT_BLINKER_LIGHT_PIN, LOW);
+#endif
     }
+#endif
+
+    // toggle voltage led blink
 
 
+    
 }
 
 void setup()
@@ -118,19 +220,22 @@ void setup()
   
   pinMode(13, OUTPUT);
   
-  brakeSwitchStatus = digitalRead(BRAKE_SWITCH_PIN);
   Serial.begin(9600);
   cli();
   
   // Set pwm for pins 5 & 6 to 7kHz
+  // this is to control the output of the power pins
+  // since we're fluctuatig between low and high power.
+  // We use timer 1 (ISR) to mudulate at 60Hz
   TCCR0B = TCCR0B & 0b11111000 | 2;
+
   
   //set timer1 interrupt at 1Hz
   TCCR1A = 0;// set entire TCCR1A register to 0
   TCCR1B = 0;// same for TCCR1B
   TCNT1  = 0;//initialize counter value to 0
   // set compare match register for 50hz increments
-  OCR1A = 312;// = (16*10^6) / (60*1024) - 1 (must be <65536)
+  OCR1A = 312;// = (16*10^6) / (50*1024) - 1 (must be <65536)
   // turn on CTC mode
   TCCR1B |= (1 << WGM12);
   // Set CS10 and CS12 bits for 1024 prescaler
@@ -190,6 +295,7 @@ void setup()
   }
 }
 
+// This takes care of the light blinking when the brake is depressed
 void lightBlink()
 {
 
@@ -197,7 +303,7 @@ void lightBlink()
   unsigned long startTime;
   Serial.println("starting blink sequence");
   
-  // short blink
+  // perform 8 short blinks
   for(int i = 0; i < 8; i++)
   {
     Serial.println("blink on");
@@ -215,6 +321,7 @@ void lightBlink()
   // long blink
   for(int i = 0; i < 3; i++)
   {
+    // break out early if brake has been released.
     if(digitalRead(BRAKE_SWITCH_PIN) == BRAKE_OFF)
     {
       break;
@@ -224,6 +331,7 @@ void lightBlink()
     startTime = millis()/MILLIS_MULTIPLIER;
     while(((millis()/MILLIS_MULTIPLIER)-startTime) < LONG_DELAY);
     
+    // break out early if brake has been released.
     if(digitalRead(BRAKE_SWITCH_PIN) == BRAKE_OFF)
     {
       break;
@@ -237,11 +345,34 @@ void lightBlink()
   
   Serial.println("solid on");  
   digitalWrite(BRAKE_LIGHT_PIN, HIGH);
-  while(digitalRead(BRAKE_SWITCH_PIN) == BRAKE_ON);
   
-  Serial.println("Exit brake function");  
-  digitalWrite(BRAKE_LIGHT_PIN, LOW);
+  
 
+}
+
+void updateVoltageStatus()
+{
+    // read analog value
+
+    // if > 15V flash red
+    v_state = VOLTAGE_STATE_TOO_HIGH;
+
+    // if 13.5 to 15, solid green
+    v_state = VOLTAGE_STATE_CHARGING;
+
+    // if 12.5 to 13.5 solid orange
+    v_state = VOLTAGE_STATE_NON_CHARGING;
+
+    // if < 12.2 blink orange
+    v_state = VOLTAGE_STATE_TOO_LOW;
+
+
+}
+
+void doStuff()
+{
+    // Do other things
+    updateVoltageStatus();
 }
 
 void loop()
@@ -249,6 +380,24 @@ void loop()
     // 
     digitalWrite(BRAKE_LIGHT_PIN, LOW);
     delay(100);// debounce any previous release
-    while(digitalRead(BRAKE_SWITCH_PIN) == BRAKE_OFF);
+    while (digitalRead(BRAKE_SWITCH_PIN) == BRAKE_OFF)
+    {
+        doStuff();
+    }
+    
+    // when brake hit is detected, blink the light.
     lightBlink();
+    
+    // wait for the brake to be released
+    while (digitalRead(BRAKE_SWITCH_PIN) == BRAKE_ON)
+    {
+        doStuff();
+    }
+
+    // Brake was released, 
+    Serial.println("Brake release detected.");
+    digitalWrite(BRAKE_LIGHT_PIN, LOW);
+
+    
+    
 }
